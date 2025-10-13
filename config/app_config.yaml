@@ -1,0 +1,47 @@
+# アプリケーション設定
+app:
+  title: "競馬走破タイム予測アプリ"
+  version: "1.0.0"
+  description: "LightGBMを用いた競馬タイム予測Webアプリケーション"
+  debug: false
+
+# ファイルパス設定
+paths:
+  models_dir: "models"
+  data_dir: "data"
+  logs_dir: "logs"
+  temp_dir: "temp"
+  bloodline_master: "data/bloodline_master.csv"
+
+# モデル設定
+model:
+  lgb_model_file: "keiba_timeseries_lgb_20251011_225236.pkl"
+  label_encoders_file: "label_encoders_20251011_225236.pkl"
+  feature_list_file: "feature_list_20251011_225236.pkl"
+
+# データ処理設定
+data_processing:
+  encoding_priority: ["utf-8-sig", "utf-8", "shift_jis"]
+  max_file_size_mb: 50
+  max_rows: 10000
+  preview_rows: 10
+
+# UI設定
+ui:
+  page_config:
+    page_title: "競馬タイム予測"
+    page_icon: "🏇"
+    layout: "wide"
+    initial_sidebar_state: "expanded"
+  
+  theme:
+    primary_color: "#1f77b4"
+    background_color: "#ffffff"
+    secondary_background_color: "#f0f2f6"
+
+# ログ設定
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_max_bytes: 10485760  # 10MB
+  backup_count: 5
