@@ -211,7 +211,7 @@ class DataInputComponent:
         ]
         
         optional_columns = [
-            '馬名', '父馬名', '母の父馬名', '走破タイム'
+            '馬名', '父馬名', '母の父馬名'  # 走破タイムを除外
         ]
         
         # Check required columns
@@ -230,6 +230,46 @@ class DataInputComponent:
             else:
                 st.write(f"⚪ {col} (なし)")
     
+    def render_column_mapping(self, uploaded_df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Render column mapping interface for CSV upload.
+        
+        Args:
+            uploaded_df: Uploaded DataFrame
+            
+        Returns:
+            Dictionary mapping CSV columns to required columns
+        """
+        st.subheader("📋 カラムマッピング")
+        st.write("CSVファイルの列名をアプリで使用する列名にマッピングしてください。")
+        
+        # 必須カラム（走破タイムを除外）
+        required_columns = {
+            '開催日': 'year_month_day',
+            '競馬場': 'venue', 
+            '距離': 'distance',
+            '芝・ダ': 'track_type',
+            '馬場状態': 'track_condition',
+            '馬番': 'horse_number',
+            '父馬名': 'father_name',
+            '母父馬名': 'mother_father_name'
+        }
+        
+        csv_columns = ['選択してください'] + list(uploaded_df.columns)
+        column_mapping = {}
+        
+        st.write("**必須項目のマッピング:**")
+        for display_name, internal_name in required_columns.items():
+            selected_column = st.selectbox(
+                f"{display_name}:",
+                options=csv_columns,
+                key=f"mapping_{internal_name}"
+            )
+            if selected_column != '選択してください':
+                column_mapping[internal_name] = selected_column
+        
+        return column_mapping
+    
     def render_data_processing(self, df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Dict[str, Any]]:
         """
         Render data processing interface and execute processing.
@@ -242,14 +282,66 @@ class DataInputComponent:
         """
         st.subheader("⚙️ データ前処理")
         
+        # Initialize session state for processing results
+        if 'processed_data' not in st.session_state:
+            st.session_state.processed_data = None
+        if 'processing_info' not in st.session_state:
+            st.session_state.processing_info = {}
+        if 'processing_completed' not in st.session_state:
+            st.session_state.processing_completed = False
+        
+        # Show results if already processed
+        if st.session_state.processing_completed and st.session_state.processed_data is not None:
+            st.success("✅ データ処理が完了しました")
+            
+            # Display processing results
+            st.write("**処理結果:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("入力レコード数", st.session_state.processing_info['input_records'])
+                st.metric("出力レコード数", st.session_state.processing_info['output_records'])
+            
+            with col2:
+                duration = st.session_state.processing_info.get('processing_duration', 0)
+                st.metric("処理時間", f"{duration:.3f}秒")
+                
+                if st.session_state.processing_info['errors']:
+                    st.metric("エラー数", len(st.session_state.processing_info['errors']))
+            
+            # Show processing steps status
+            steps = [
+                ('バリデーション', st.session_state.processing_info['validation_passed']),
+                ('データクリーニング', st.session_state.processing_info['cleaning_completed']),
+                ('特徴量生成', st.session_state.processing_info['feature_engineering_completed'])
+            ]
+            
+            st.write("**処理ステップ:**")
+            for step_name, status in steps:
+                status_icon = "✅" if status else "❌"
+                st.write(f"{status_icon} {step_name}")
+            
+            # Show processed data preview
+            if len(st.session_state.processed_data) > 0:
+                st.write("**処理後データプレビュー:**")
+                st.dataframe(st.session_state.processed_data.head(), use_container_width=True)
+            
+            # Reset button
+            if st.button("🔄 データを再処理", type="secondary"):
+                st.session_state.processing_completed = False
+                st.session_state.processed_data = None
+                st.session_state.processing_info = {}
+                st.rerun()
+                
+            return st.session_state.processed_data, st.session_state.processing_info
+        
+        # Process button
         if st.button("データ前処理を実行", type="primary"):
             with st.spinner("処理中..."):
                 # Step 1: Bloodline enrichment
                 if '父馬名' in df.columns and '母の父馬名' in df.columns:
                     st.write("🧬 血統情報付与中...")
-                    enriched_df = self.bloodline_manager.enrich_dataframe(
-                        df, '父馬名', '母の父馬名'
-                    )
+                    enriched_df = self.bloodline_manager.enrich_dataframe(df)
                     bloodline_added = len(enriched_df.columns) - len(df.columns)
                     st.write(f"✅ 血統列追加: {bloodline_added}列")
                 else:
@@ -260,45 +352,13 @@ class DataInputComponent:
                 st.write("📊 特徴量エンジニアリング中...")
                 processed_df, processing_info = self.data_processor.process_data(enriched_df)
                 
-                # Display processing results
-                st.write("**処理結果:**")
-                col1, col2 = st.columns(2)
+                # Store results in session state
+                st.session_state.processed_data = processed_df
+                st.session_state.processing_info = processing_info
+                st.session_state.processing_completed = True
                 
-                with col1:
-                    st.metric("入力レコード数", processing_info['input_records'])
-                    st.metric("出力レコード数", processing_info['output_records'])
-                
-                with col2:
-                    duration = processing_info.get('processing_duration', 0)
-                    st.metric("処理時間", f"{duration:.3f}秒")
-                    
-                    if processing_info['errors']:
-                        st.metric("エラー数", len(processing_info['errors']))
-                
-                # Show processing steps status
-                steps = [
-                    ('バリデーション', processing_info['validation_passed']),
-                    ('データクリーニング', processing_info['cleaning_completed']),
-                    ('特徴量生成', processing_info['feature_engineering_completed'])
-                ]
-                
-                st.write("**処理ステップ:**")
-                for step_name, status in steps:
-                    status_icon = "✅" if status else "❌"
-                    st.write(f"{status_icon} {step_name}")
-                
-                # Show errors if any
-                if processing_info['errors']:
-                    st.error("処理エラー:")
-                    for error in processing_info['errors']:
-                        st.write(f"• {error}")
-                
-                # Show processed data preview
-                if len(processed_df) > 0:
-                    st.write("**処理後データプレビュー:**")
-                    st.dataframe(processed_df.head(), use_container_width=True)
-                
-                return processed_df, processing_info
+                st.success("✅ データ処理が完了しました")
+                st.rerun()
         
         return None, {}
     

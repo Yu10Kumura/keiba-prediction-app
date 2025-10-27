@@ -199,12 +199,14 @@ class HorseRacingApp:
             # Data validation
             data_input_component.render_data_validation(uploaded_data)
             
-            # Column mapping if needed
-            mapped_data = data_input_component.render_column_mapping(uploaded_data)
+            # Skip column mapping if CSV already has correct column names
+            # Direct data processing
+            processed_data = data_input_component.render_data_processing(uploaded_data)
             
-            if mapped_data is not None:
-                # Data processing
-                processed_data = data_input_component.render_data_processing(mapped_data)
+            if processed_data is not None:
+                st.session_state.processed_data = processed_data
+                st.success("✅ データ処理が完了しました")
+                st.rerun()
                 
                 if processed_data is not None:
                     st.session_state.processed_data = processed_data

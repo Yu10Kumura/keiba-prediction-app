@@ -179,36 +179,15 @@ class DataProcessor:
             # Remove outliers (same logic as training)
             initial_count = len(df_clean)
             
-            # Remove zero time records
-            if '走破タイム' in df_clean.columns:
-                zero_mask = df_clean['走破タイム'] == 0
-                zero_count = zero_mask.sum()
-                df_clean = df_clean[~zero_mask].copy()
-                
-                # Distance-based IQR outlier removal
-                outlier_count = 0
-                for distance in df_clean['距離'].unique():
-                    distance_mask = df_clean['距離'] == distance
-                    distance_data = df_clean[distance_mask]['走破タイム']
-                    
-                    if len(distance_data) > 10:
-                        q1 = distance_data.quantile(0.25)
-                        q3 = distance_data.quantile(0.75)
-                        iqr = q3 - q1
-                        lower_bound = q1 - 1.5 * iqr
-                        upper_bound = q3 + 1.5 * iqr
-                        
-                        outlier_mask = distance_mask & (
-                            (df_clean['走破タイム'] < lower_bound) | 
-                            (df_clean['走破タイム'] > upper_bound)
-                        )
-                        outlier_count += outlier_mask.sum()
-                        df_clean = df_clean[~outlier_mask].copy()
-                
-                logger.info(f"Data cleaning completed:")
-                logger.info(f"  Zero time records removed: {zero_count}")
-                logger.info(f"  IQR outliers removed: {outlier_count}")
-                logger.info(f"  Remaining records: {len(df_clean)} (from {initial_count})")
+            # Skip race time processing for prediction data (no target time)
+            # (走破タイム処理をスキップ - 予測用データのため)
+            zero_count = 0
+            outlier_count = 0
+            
+            logger.info(f"Data cleaning completed:")
+            logger.info(f"  Zero time records removed: {zero_count}")
+            logger.info(f"  IQR outliers removed: {outlier_count}")
+            logger.info(f"  Remaining records: {len(df_clean)} (from {initial_count})")
             
             return df_clean
             
