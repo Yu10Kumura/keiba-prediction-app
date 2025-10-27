@@ -155,11 +155,11 @@ class DataInputComponent:
                 'ユニーク値数': unique_count
             })
         
-        st.dataframe(pd.DataFrame(column_info), use_container_width=True)
+        st.dataframe(pd.DataFrame(column_info), width='stretch')
         
         # Data preview
         st.write("**データサンプル（最初の5行）:**")
-        st.dataframe(df.head(), use_container_width=True)
+        st.dataframe(df.head(), width='stretch')
     
     def render_data_validation(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -322,9 +322,11 @@ class DataInputComponent:
                 st.write(f"{status_icon} {step_name}")
             
             # Show processed data preview
-            if len(st.session_state.processed_data) > 0:
+            if (st.session_state.processed_data is not None and 
+                hasattr(st.session_state.processed_data, 'head') and 
+                len(st.session_state.processed_data) > 0):
                 st.write("**処理後データプレビュー:**")
-                st.dataframe(st.session_state.processed_data.head(), use_container_width=True)
+                st.dataframe(st.session_state.processed_data.head(), width='stretch')
             
             # Reset button
             if st.button("🔄 データを再処理", type="secondary"):
@@ -350,7 +352,14 @@ class DataInputComponent:
                 
                 # Step 2: Data processing
                 st.write("📊 特徴量エンジニアリング中...")
-                processed_df, processing_info = self.data_processor.process_data(enriched_df)
+                result = self.data_processor.process_data(enriched_df)
+                
+                # Handle both tuple and DataFrame returns
+                if isinstance(result, tuple):
+                    processed_df, processing_info = result
+                else:
+                    processed_df = result
+                    processing_info = {'input_records': len(enriched_df), 'output_records': len(processed_df)}
                 
                 # Store results in session state
                 st.session_state.processed_data = processed_df
@@ -376,7 +385,7 @@ class DataInputComponent:
             sample_df = create_sample_data()
             
             st.success("✅ サンプルデータを読み込みました")
-            st.dataframe(sample_df, use_container_width=True)
+            st.dataframe(sample_df, width='stretch')
             
             return sample_df
         

@@ -282,7 +282,7 @@ class HorseRacingApp:
         
         # Show sample of processed data
         with st.expander("処理済みデータプレビュー", expanded=False):
-            st.dataframe(processed_data.head(), use_container_width=True)
+            st.dataframe(processed_data.head(), width='stretch')
     
     def _render_results_section(self):
         """Render results section."""
