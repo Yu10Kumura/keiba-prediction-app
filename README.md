@@ -129,3 +129,4 @@ tail -f logs/app.log
 ---
 **開発**: 競馬分析チーム  
 **最終更新**: 2025年10月12日
+# Force redeploy
