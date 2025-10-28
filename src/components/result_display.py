@@ -37,12 +37,22 @@ class ResultDisplayComponent:
         """
         st.subheader("🎯 予測結果")
         
-        # Debug information
-        st.write(f"DEBUG: predictions型: {type(predictions)}")
-        st.write(f"DEBUG: predictionsキー: {predictions.keys() if isinstance(predictions, dict) else 'Not a dict'}")
+    def render_prediction_results(
+        self, 
+        predictions: Dict[str, Any],
+        input_data: Optional[pd.DataFrame] = None
+    ) -> None:
+        """
+        Render prediction results with metrics and visualization.
+        
+        Args:
+            predictions: Dictionary containing prediction results
+            input_data: Original input data for context
+        """
+        st.subheader("🎯 予測結果")
         
         if not predictions:
-            st.error("❌ 予測結果がありません（予測結果が空です）")
+            st.error("❌ 予測結果がありません")
             return
         
         # Handle different prediction result formats
@@ -51,53 +61,89 @@ class ResultDisplayComponent:
                 st.error(f"❌ 予測に失敗しました: {predictions.get('error', '不明なエラー')}")
                 return
             
-            # Try different key formats
-            predicted_time = None
-            confidence_score = 0
-            
-            if 'prediction' in predictions:
-                predicted_time = predictions['prediction']
-            elif 'predictions' in predictions and len(predictions['predictions']) > 0:
-                predicted_time = predictions['predictions'][0]
+            # Get predictions array
+            prediction_values = None
+            if 'predictions' in predictions:
+                prediction_values = predictions['predictions']
+            elif 'prediction' in predictions:
+                prediction_values = predictions['prediction']
+                if not isinstance(prediction_values, list):
+                    prediction_values = [prediction_values]
             else:
-                st.error("❌ 予測結果が見つかりません（predictionキーが存在しません）")
+                st.error("❌ 予測結果が見つかりません")
                 return
         else:
             st.error("❌ 予測結果の形式が不正です")
             return
         
-        # Main prediction display
+        # Create results DataFrame
+        horse_names = []
+        if input_data is not None and len(input_data) > 0:
+            try:
+                # G列（インデックス6）から馬名を直接取得
+                if input_data.shape[1] > 6:
+                    horse_names = input_data.iloc[:, 6].astype(str).tolist()
+                    # 長さを予測結果に合わせる
+                    horse_names = horse_names[:len(prediction_values)]
+            except Exception:
+                horse_names = []
+        
+        # If no horse names found, create default names
+        if not horse_names or len(horse_names) != len(prediction_values):
+            horse_names = [f"馬{i}" for i in range(1, len(prediction_values) + 1)]
+        
+        results_df = pd.DataFrame({
+            '馬番': range(1, len(prediction_values) + 1),
+            '馬名': horse_names,
+            '予測走破タイム(秒)': [f"{pred:.2f}" for pred in prediction_values],
+            '順位予想': range(1, len(prediction_values) + 1)  # Will be sorted by time
+        })
+        
+        # Sort by predicted time to get ranking
+        results_df['予測走破タイム_数値'] = prediction_values
+        results_df = results_df.sort_values('予測走破タイム_数値').reset_index(drop=True)
+        results_df['順位予想'] = range(1, len(results_df) + 1)
+        results_df = results_df.drop('予測走破タイム_数値', axis=1)
+        
+        # Display summary metrics
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.metric(
-                "予測走破タイム",
-                f"{predicted_time:.2f}秒",
-                delta=None
-            )
+            fastest_time = min(prediction_values)
+            st.metric("最速予想タイム", f"{fastest_time:.2f}秒")
         
         with col2:
-            confidence_info = predictions.get('confidence', {})
-            if isinstance(confidence_info, dict):
-                confidence_score = confidence_info.get('confidence_score', 0) * 100
-            else:
-                confidence_score = confidence_info * 100 if confidence_info else 0
-            
-            st.metric(
-                "予測信頼度",
-                f"{confidence_score:.1f}%",
-                delta=None
-            )
+            slowest_time = max(prediction_values)
+            st.metric("最遅予想タイム", f"{slowest_time:.2f}秒")
         
         with col3:
-            st.metric(
-                "モデル種別",
-                "LightGBM",
-                delta=None
-            )
+            time_range = slowest_time - fastest_time
+            st.metric("タイム幅", f"{time_range:.2f}秒")
         
-        # Prediction details
-        self._render_prediction_details(predictions, input_data)
+        # Display results table
+        st.write("**🏇 全馬予測結果**")
+        st.dataframe(
+            results_df,
+            width='stretch',
+            hide_index=True,
+            column_config={
+                "馬番": st.column_config.NumberColumn("馬番", width="small"),
+                "馬名": st.column_config.TextColumn("馬名", width="medium"),
+                "予測走破タイム(秒)": st.column_config.TextColumn("予測走破タイム(秒)", width="medium"),
+                "順位予想": st.column_config.NumberColumn("順位予想", width="small")
+            }
+        )
+        
+        # Add context if input data is available
+        if input_data is not None and len(input_data) > 0:
+            st.write("**📊 入力データ概要**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("対象レース頭数", len(input_data))
+            with col2:
+                if '距離' in input_data.columns:
+                    distance = input_data['距離'].iloc[0] if not input_data['距離'].empty else "不明"
+                    st.metric("レース距離", f"{distance}m")
         
         # Feature importance if available
         if 'feature_importance' in predictions:

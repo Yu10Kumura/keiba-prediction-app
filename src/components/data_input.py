@@ -282,61 +282,6 @@ class DataInputComponent:
         """
         st.subheader("⚙️ データ前処理")
         
-        # Initialize session state for processing results
-        if 'processed_data' not in st.session_state:
-            st.session_state.processed_data = None
-        if 'processing_info' not in st.session_state:
-            st.session_state.processing_info = {}
-        if 'processing_completed' not in st.session_state:
-            st.session_state.processing_completed = False
-        
-        # Show results if already processed
-        if st.session_state.processing_completed and st.session_state.processed_data is not None:
-            st.success("✅ データ処理が完了しました")
-            
-            # Display processing results
-            st.write("**処理結果:**")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric("入力レコード数", st.session_state.processing_info['input_records'])
-                st.metric("出力レコード数", st.session_state.processing_info['output_records'])
-            
-            with col2:
-                duration = st.session_state.processing_info.get('processing_duration', 0)
-                st.metric("処理時間", f"{duration:.3f}秒")
-                
-                if st.session_state.processing_info['errors']:
-                    st.metric("エラー数", len(st.session_state.processing_info['errors']))
-            
-            # Show processing steps status
-            steps = [
-                ('バリデーション', st.session_state.processing_info['validation_passed']),
-                ('データクリーニング', st.session_state.processing_info['cleaning_completed']),
-                ('特徴量生成', st.session_state.processing_info['feature_engineering_completed'])
-            ]
-            
-            st.write("**処理ステップ:**")
-            for step_name, status in steps:
-                status_icon = "✅" if status else "❌"
-                st.write(f"{status_icon} {step_name}")
-            
-            # Show processed data preview
-            if (st.session_state.processed_data is not None and 
-                hasattr(st.session_state.processed_data, 'head') and 
-                len(st.session_state.processed_data) > 0):
-                st.write("**処理後データプレビュー:**")
-                st.dataframe(st.session_state.processed_data.head(), width='stretch')
-            
-            # Reset button
-            if st.button("🔄 データを再処理", type="secondary"):
-                st.session_state.processing_completed = False
-                st.session_state.processed_data = None
-                st.session_state.processing_info = {}
-                st.rerun()
-                
-            return st.session_state.processed_data, st.session_state.processing_info
-        
         # Process button
         if st.button("データ前処理を実行", type="primary"):
             with st.spinner("処理中..."):
@@ -361,13 +306,48 @@ class DataInputComponent:
                     processed_df = result
                     processing_info = {'input_records': len(enriched_df), 'output_records': len(processed_df)}
                 
-                # Store results in session state
-                st.session_state.processed_data = processed_df
-                st.session_state.processing_info = processing_info
-                st.session_state.processing_completed = True
-                
+                # Display processing results
                 st.success("✅ データ処理が完了しました")
-                st.rerun()
+                st.write("**処理結果:**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.metric("入力レコード数", processing_info.get('input_records', 0))
+                    st.metric("出力レコード数", processing_info.get('output_records', 0))
+                
+                with col2:
+                    duration = processing_info.get('processing_duration', 0)
+                    st.metric("処理時間", f"{duration:.3f}秒")
+                    
+                    if processing_info.get('errors'):
+                        st.metric("エラー数", len(processing_info['errors']))
+                
+                # Show processing steps status
+                steps = [
+                    ('バリデーション', processing_info.get('validation_passed', True)),
+                    ('データクリーニング', processing_info.get('cleaning_completed', True)),
+                    ('特徴量生成', processing_info.get('feature_engineering_completed', True))
+                ]
+                
+                st.write("**処理ステップ:**")
+                for step_name, status in steps:
+                    status_icon = "✅" if status else "❌"
+                    st.write(f"{status_icon} {step_name}")
+                
+                # Show errors if any
+                if processing_info.get('errors'):
+                    st.error("処理エラー:")
+                    for error in processing_info['errors']:
+                        st.write(f"• {error}")
+                
+                # Show processed data preview
+                if (processed_df is not None and 
+                    hasattr(processed_df, 'head') and 
+                    len(processed_df) > 0):
+                    st.write("**処理後データプレビュー:**")
+                    st.dataframe(processed_df.head(), width='stretch')
+                
+                return processed_df, processing_info
         
         return None, {}
     

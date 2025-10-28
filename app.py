@@ -196,22 +196,18 @@ class HorseRacingApp:
         uploaded_data = data_input_component.render_file_upload()
         
         if uploaded_data is not None:
+            # Store original CSV data for horse names
+            st.session_state.original_csv_data = uploaded_data
+            
             # Data validation
             data_input_component.render_data_validation(uploaded_data)
             
             # Skip column mapping if CSV already has correct column names
             # Direct data processing
-            processed_data = data_input_component.render_data_processing(uploaded_data)
+            processed_data, processing_info = data_input_component.render_data_processing(uploaded_data)
             
             if processed_data is not None:
                 st.session_state.processed_data = processed_data
-                st.success("✅ データ処理が完了しました")
-                st.rerun()
-                
-                if processed_data is not None:
-                    st.session_state.processed_data = processed_data
-                    st.success("✅ データ処理が完了しました")
-                    st.rerun()
     
     def _render_manual_input_section(self):
         """Render manual input section."""
@@ -300,8 +296,10 @@ class HorseRacingApp:
         
         # Single prediction results
         if isinstance(prediction_results, dict):
+            # Use original CSV data for horse names
+            original_data = st.session_state.get('original_csv_data', input_data)
             result_display_component.render_prediction_results(
-                prediction_results, input_data
+                prediction_results, original_data
             )
         
         # Batch prediction results
