@@ -44,6 +44,10 @@ class DataInputComponent:
         """
         st.subheader("📂 データファイルアップロード")
         
+        # CSV Format Guide
+        with st.expander("📋 CSVフォーマットガイド", expanded=False):
+            self._render_csv_format_guide()
+        
         # File upload widget
         uploaded_file = st.file_uploader(
             "CSVファイルをアップロードしてください",
@@ -370,3 +374,90 @@ class DataInputComponent:
             return sample_df
         
         return None
+    
+    def _render_csv_format_guide(self) -> None:
+        """CSVフォーマットガイドを表示"""
+        st.markdown("### 🎯 対応フォーマット")
+        
+        # Basic requirements
+        st.markdown("#### ✅ 必須列（全モデル共通）")
+        required_cols = [
+            ("年月日", "YYYYMMDD形式", "20250101"),
+            ("場所", "競馬場名", "東京, 中山, 阪神"),
+            ("芝・ダ", "コース種別", "芝, ダ"), 
+            ("距離", "コース距離(m)", "1200, 2000"),
+            ("馬場状態", "馬場状態", "良, 稍重, 重, 不良"),
+            ("馬番", "馬番", "1〜18")
+        ]
+        
+        cols_df = pd.DataFrame(required_cols, columns=['列名', '説明', '例'])
+        st.dataframe(cols_df, use_container_width=True, hide_index=True)
+        
+        # Optional columns
+        st.markdown("#### 🔧 オプション列（血統情報）")
+        optional_cols = [
+            ("馬名", "馬名", "ディープインパクト"),
+            ("父馬名", "父馬名", "サンデーサイレンス"),
+            ("母の父馬名", "母の父馬名", "Halo")
+        ]
+        
+        opt_df = pd.DataFrame(optional_cols, columns=['列名', '説明', '例'])
+        st.dataframe(opt_df, use_container_width=True, hide_index=True)
+        
+        # V3 specific columns
+        st.markdown("#### 🚀 V3専用列（高精度予測用）")
+        v3_cols = [
+            ("頭数", "出走頭数", "16"),
+            ("斤量", "負担重量", "56.0"),
+            ("通過順1〜4", "各コーナー通過順", "1, 2, 1, 1"),
+            ("上がり3Fタイム", "上がり3F", "33.5"),
+            ("騎手名", "騎手名", "武豊"),
+            ("調教師", "調教師名", "藤沢和雄"),
+            ("走破タイム", "実際のタイム(秒)", "120.5")
+        ]
+        
+        v3_df = pd.DataFrame(v3_cols, columns=['列名', '説明', '例'])
+        st.dataframe(v3_df, use_container_width=True, hide_index=True)
+        
+        # Template download
+        st.markdown("#### 📁 テンプレートファイル")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Basic template
+            basic_template = """年月日,場所,芝・ダ,距離,馬場状態,馬名,馬番,父馬名,母の父馬名
+20250101,東京,芝,2000,良,サンプル馬1,1,ディープインパクト,サンデーサイレンス
+20250101,東京,芝,2000,良,サンプル馬2,2,オルフェーヴル,キングカメハメハ"""
+            
+            st.download_button(
+                label="📄 基本テンプレート",
+                data=basic_template,
+                file_name="csv_template_basic.csv",
+                mime="text/csv",
+                help="V2/V3共通の基本フォーマット"
+            )
+        
+        with col2:
+            # V3 template
+            v3_template = """年月日,場所,芝・ダ,距離,馬場状態,馬名,馬番,父馬名,母の父馬名,頭数,斤量,通過順1,通過順2,通過順3,通過順4,上がり3Fタイム,騎手名,調教師
+20250101,東京,芝,2000,良,サンプル馬1,1,ディープインパクト,サンデーサイレンス,16,56,1,1,2,1,33.5,騎手A,調教師A
+20250101,東京,芝,2000,良,サンプル馬2,2,オルフェーヴル,キングカメハメハ,16,57,3,3,3,2,34.2,騎手B,調教師B"""
+            
+            st.download_button(
+                label="🚀 V3詳細テンプレート", 
+                data=v3_template,
+                file_name="csv_template_v3.csv",
+                mime="text/csv",
+                help="V3機能フル対応フォーマット"
+            )
+        
+        # File specifications
+        st.markdown("#### ⚙️ ファイル仕様")
+        st.info("""
+        • **形式**: CSV (.csv)
+        • **最大サイズ**: 50MB
+        • **最大行数**: 10,000行
+        • **エンコーディング**: UTF-8, Shift_JIS (自動判定)
+        • **V3順位予測**: 同一レースの複数馬データを同時アップロード
+        """)
