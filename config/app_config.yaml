@@ -15,9 +15,18 @@ paths:
 
 # モデル設定
 model:
-  lgb_model_file: "keiba_timeseries_lgb_20251011_225236.pkl"
-  label_encoders_file: "label_encoders_20251011_225236.pkl"
-  feature_list_file: "feature_list_20251011_225236.pkl"
+  # V2 (従来版)
+  v2:
+    lgb_model_file: "keiba_timeseries_lgb_20251011_225236.pkl"
+    label_encoders_file: "label_encoders_20251011_225236.pkl"
+    feature_list_file: "feature_list_20251011_225236.pkl"
+  
+  # V3 (Phase 1統合版)
+  v3:
+    model_pattern: "keiba_model_v3_*.pkl"
+    feature_count: 28
+    includes_order_prediction: true
+    includes_running_style: true
 
 # データ処理設定
 data_processing:
