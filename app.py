@@ -60,8 +60,8 @@ class BloodlineManager:
                 horse_name = self.normalize_text(row['馬名'])
                 if horse_name:
                     self.bloodline_dict[horse_name] = (
-                        row['小系統'] if pd.notna(row['小系統']) else 'UNK',
-                        row['国系統'] if pd.notna(row['国系統']) else 'UNK'
+                        row['小系統'] if pd.notna(row['小系統']) else 'UNKNOWN',
+                        row['国系統'] if pd.notna(row['国系統']) else 'UNKNOWN'
                     )
             
             self.logger.info(f"血統マスタを読み込みました: {len(self.bloodline_dict)}頭の馬")
@@ -85,11 +85,15 @@ class BloodlineManager:
             return self.bloodline_dict[normalized_name]
         else:
             self.logger.warning(f"血統情報が見つかりません: {horse_name}")
-            return ('UNK', 'UNK')
+            return ('UNKNOWN', 'UNKNOWN')
     
     def enrich_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """DataFrameに血統情報を追加"""
         result_df = df.copy()
+        
+        # デバッグ情報
+        found_count = 0
+        not_found_horses = []
         
         # 父馬名と母の父馬名の血統情報を追加
         for horse_type, prefix in [('父馬名', '父'), ('母の父馬名', '母父')]:
@@ -104,12 +108,23 @@ class BloodlineManager:
                 small, country = self.lookup_bloodline(horse_name)
                 small_lineages.append(small)
                 country_lineages.append(country)
+                
+                # デバッグ: 見つかったかカウント
+                if small != 'UNKNOWN' and country != 'UNKNOWN':
+                    found_count += 1
+                else:
+                    not_found_horses.append(horse_name)
             
             result_df[f'{prefix}_小系統'] = small_lineages
             result_df[f'{prefix}_国系統'] = country_lineages
         
-        self.logger.info(f"血統情報を追加しました: {len(result_df)}行")
-        return result_df
+        self.logger.info(f"血統情報を追加: 成功={found_count}件, 未発見={len(not_found_horses)}件")
+        
+        # 未発見の馬をログ出力
+        if not_found_horses:
+            self.logger.warning(f"血統マスタに見つからなかった馬: {set(not_found_horses)}")
+        
+        return result_df, not_found_horses  # 未発見リストも返す
 
 class KeibaV4PredictionApp:
     """V4競馬予測システム メインアプリケーション"""
@@ -226,6 +241,12 @@ class KeibaV4PredictionApp:
         """V4モデル用データ前処理"""
         try:
             df = df.copy()
+            
+            # 0. 血統情報の欠損値をUNKNOWNに置き換え
+            bloodline_cols = ['父_小系統', '父_国系統', '母父_小系統', '母父_国系統']
+            for col in bloodline_cols:
+                if col in df.columns:
+                    df[col] = df[col].fillna('UNKNOWN').replace('', 'UNKNOWN')
             
             # 1. カテゴリカル変数のエンコーディング
             categorical_cols = [
@@ -428,10 +449,36 @@ class KeibaV4PredictionApp:
                         st.info("🧬 血統情報が不足しています。父馬名・母の父馬名から自動補完します...")
                         
                         with st.spinner("血統情報を補完中..."):
-                            df = self.bloodline_manager.enrich_dataframe(df)
+                            df, not_found_horses = self.bloodline_manager.enrich_dataframe(df)
                         
                         st.success("✅ 血統情報を補完しました")
-                        st.dataframe(df[['馬名', '父馬名', '父_小系統', '父_国系統', '母の父馬名', '母父_小系統', '母父_国系統']].head(5), use_container_width=True)
+                        
+                        # 補完統計情報
+                        total_horses = len(df) * 2  # 父 + 母父
+                        found_count = total_horses - len(not_found_horses)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("総馬数", f"{total_horses}頭")
+                        with col2:
+                            st.metric("補完成功", f"{found_count}頭", delta=f"{found_count/total_horses*100:.1f}%")
+                        with col3:
+                            st.metric("未発見", f"{len(not_found_horses)}頭")
+                        
+                        # 未発見の馬リスト表示
+                        if not_found_horses:
+                            with st.expander("⚠️ 血統マスタに見つからなかった馬（UNKNOWN設定）"):
+                                unique_not_found = sorted(set(not_found_horses))
+                                st.write(", ".join(unique_not_found))
+                        
+                        # 補完結果のサンプル表示
+                        st.markdown("#### 📋 補完後データサンプル（先頭5行）")
+                        sample_cols = ['馬名', '父馬名', '父_小系統', '父_国系統', '母の父馬名', '母父_小系統', '母父_国系統']
+                        st.dataframe(df[sample_cols].head(5), use_container_width=True)
+                        
+                        # 補完後の全データ表示
+                        with st.expander("📊 補完後の全データを表示"):
+                            st.dataframe(df, use_container_width=True, height=400)
                     else:
                         st.error("❌ 血統情報の補完には `父馬名` と `母の父馬名` の列が必要です")
                         st.stop()
