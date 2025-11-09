@@ -16,8 +16,9 @@ import joblib
 import json
 from pathlib import Path
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import traceback
+import unicodedata
 
 # ページ設定
 st.set_page_config(
@@ -31,6 +32,85 @@ st.set_page_config(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class BloodlineManager:
+    """血統マスタ管理クラス"""
+    
+    def __init__(self, master_file_path: str):
+        """血統マスタファイルを読み込んで初期化"""
+        self.master_file_path = Path(master_file_path)
+        self.bloodline_dict = {}
+        self.logger = logging.getLogger(__name__)
+        self._load_bloodline_master()
+    
+    def _load_bloodline_master(self) -> None:
+        """血統マスタファイルを読み込み、辞書形式で保存"""
+        try:
+            df = pd.read_csv(self.master_file_path, encoding='utf-8-sig')
+            
+            # 必要な列があるかチェック
+            required_cols = ['馬名', '小系統', '国系統']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            
+            if missing_cols:
+                raise ValueError(f"血統マスタに必要な列がありません: {missing_cols}")
+            
+            # 血統辞書を構築
+            for _, row in df.iterrows():
+                horse_name = self.normalize_text(row['馬名'])
+                if horse_name:
+                    self.bloodline_dict[horse_name] = (
+                        row['小系統'] if pd.notna(row['小系統']) else 'UNK',
+                        row['国系統'] if pd.notna(row['国系統']) else 'UNK'
+                    )
+            
+            self.logger.info(f"血統マスタを読み込みました: {len(self.bloodline_dict)}頭の馬")
+            
+        except Exception as e:
+            self.logger.error(f"血統マスタの読み込みに失敗: {e}")
+            raise RuntimeError(f"血統マスタ読み込みエラー: {e}") from e
+    
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """テキストの正規化"""
+        if pd.isna(text):
+            return ''
+        return unicodedata.normalize('NFKC', str(text)).strip()
+    
+    def lookup_bloodline(self, horse_name: str) -> Tuple[str, str]:
+        """馬名から血統情報を検索"""
+        normalized_name = self.normalize_text(horse_name)
+        
+        if normalized_name in self.bloodline_dict:
+            return self.bloodline_dict[normalized_name]
+        else:
+            self.logger.warning(f"血統情報が見つかりません: {horse_name}")
+            return ('UNK', 'UNK')
+    
+    def enrich_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """DataFrameに血統情報を追加"""
+        result_df = df.copy()
+        
+        # 父馬名と母の父馬名の血統情報を追加
+        for horse_type, prefix in [('父馬名', '父'), ('母の父馬名', '母父')]:
+            if horse_type not in result_df.columns:
+                self.logger.warning(f"列 '{horse_type}' が見つかりません")
+                continue
+            
+            small_lineages = []
+            country_lineages = []
+            
+            for horse_name in result_df[horse_type]:
+                small, country = self.lookup_bloodline(horse_name)
+                small_lineages.append(small)
+                country_lineages.append(country)
+            
+            result_df[f'{prefix}_小系統'] = small_lineages
+            result_df[f'{prefix}_国系統'] = country_lineages
+        
+        self.logger.info(f"血統情報を追加しました: {len(result_df)}行")
+        return result_df
+
 class KeibaV4PredictionApp:
     """V4競馬予測システム メインアプリケーション"""
     
@@ -39,9 +119,34 @@ class KeibaV4PredictionApp:
         self.encoders = None
         self.feature_columns = None
         self.model_loaded = False
+        self.bloodline_manager = None
+        
+        # 血統マネージャー読み込み
+        self.load_bloodline_manager()
         
         # モデル読み込み
         self.load_v4_model()
+    
+    def load_bloodline_manager(self):
+        """血統マスタを読み込み"""
+        try:
+            bloodline_paths = [
+                Path("data/bloodline_master.csv"),
+                Path("./data/bloodline_master.csv"),
+                Path("../data/bloodline_master.csv")
+            ]
+            
+            for bloodline_path in bloodline_paths:
+                if bloodline_path.exists():
+                    self.bloodline_manager = BloodlineManager(str(bloodline_path))
+                    logger.info(f"血統マスタ読み込み成功: {bloodline_path}")
+                    return
+            
+            logger.warning("⚠️ 血統マスタファイルが見つかりません。血統補完機能は無効です。")
+            
+        except Exception as e:
+            logger.error(f"血統マスタ読み込みエラー: {str(e)}")
+            st.warning("⚠️ 血統マスタの読み込みに失敗しました。血統補完機能は無効です。")
     
     def load_v4_model(self):
         """V4モデルとエンコーダーを読み込み"""
@@ -270,15 +375,30 @@ class KeibaV4PredictionApp:
             - **レース条件**: `場所`, `芝・ダ`, `馬場状態`
             - **人間情報**: `騎手名`, `調教師`, `性別`
             - **人気情報**: `人気順`, `単勝オッズ`
-            - **血統情報**: `父_小系統`, `父_国系統`, `母父_小系統`, `母父_国系統`
             - **日付情報**: `年`, `月`, `日`
             - **識別情報**: `馬名`
             
-            ### サンプルデータ:
+            ### 血統情報（以下のいずれか）:
+            
+            **パターン1: 血統系統を直接指定**
+            - `父_小系統`, `父_国系統`, `母父_小系統`, `母父_国系統`
+            
+            **パターン2: 馬名から自動補完（推奨）**
+            - `父馬名`, `母の父馬名` → システムが自動的に系統情報を補完します
+            
+            ### サンプルデータ（パターン1）:
             ```csv
             馬名,年,月,日,場所,芝・ダ,距離,馬場状態,馬番,性別,年齢,騎手名,調教師,斤量,頭数,人気順,単勝オッズ,父_小系統,父_国系統,母父_小系統,母父_国系統
             サンプル馬,25,11,10,東京,芝,2000,良,1,牡,4,騎手A,調教師B,57,16,1,2.1,ディープ系,日本型サンデー系,キングマンボ系,欧州型ミスプロ系
             ```
+            
+            ### サンプルデータ（パターン2 - 自動補完）:
+            ```csv
+            馬名,年,月,日,場所,芝・ダ,距離,馬場状態,馬番,性別,年齢,騎手名,調教師,斤量,頭数,人気順,単勝オッズ,父馬名,母の父馬名
+            サンプル馬,25,11,10,東京,芝,2000,良,1,牡,4,騎手A,調教師B,57,16,1,2.1,ディープインパクト,キングマンボ
+            ```
+            
+            ※ パターン2の場合、システムが自動的に血統系統情報を付与します
             """)
         
         # ファイルアップロード
@@ -297,6 +417,24 @@ class KeibaV4PredictionApp:
                 # データプレビュー
                 st.markdown("### 📊 アップロードデータプレビュー")
                 st.dataframe(df.head(10), use_container_width=True)
+                
+                # 血統情報の自動補完チェック
+                bloodline_cols = ['父_小系統', '父_国系統', '母父_小系統', '母父_国系統']
+                missing_bloodline = [col for col in bloodline_cols if col not in df.columns]
+                
+                if missing_bloodline and self.bloodline_manager:
+                    # 父馬名と母の父馬名があるかチェック
+                    if '父馬名' in df.columns and '母の父馬名' in df.columns:
+                        st.info("🧬 血統情報が不足しています。父馬名・母の父馬名から自動補完します...")
+                        
+                        with st.spinner("血統情報を補完中..."):
+                            df = self.bloodline_manager.enrich_dataframe(df)
+                        
+                        st.success("✅ 血統情報を補完しました")
+                        st.dataframe(df[['馬名', '父馬名', '父_小系統', '父_国系統', '母の父馬名', '母父_小系統', '母父_国系統']].head(5), use_container_width=True)
+                    else:
+                        st.error("❌ 血統情報の補完には `父馬名` と `母の父馬名` の列が必要です")
+                        st.stop()
                 
                 # 必要カラムチェック
                 required_cols = [
