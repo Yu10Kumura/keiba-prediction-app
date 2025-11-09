@@ -1,0 +1,23 @@
+[
+  "距離",
+  "頭数",
+  "馬番",
+  "年齢",
+  "斤量",
+  "人気順",
+  "単勝オッズ_log",
+  "年月",
+  "季節",
+  "場所_encoded",
+  "芝・ダ_encoded",
+  "馬場状態_encoded",
+  "性別_encoded",
+  "騎手名_encoded",
+  "調教師_encoded",
+  "距離_表面_encoded",
+  "父_小系統_encoded",
+  "父_国系統_encoded",
+  "母父_小系統_encoded",
+  "母父_国系統_encoded",
+  "血統組み合わせ_encoded"
+]

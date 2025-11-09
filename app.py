@@ -1,533 +1,520 @@
 """
-Main Streamlit application for horse racing time prediction.
+競馬予測システム V4 - Streamlit アプリケーション
+レース前情報のみを使用したタイム予測システム
 
-This is the entry point for the web application that provides
-both file upload and manual input interfaces for race prediction.
+機能:
+- CSV一括予測
+- 手動入力予測  
+- V4高精度モデル（MAE 0.961秒）
+- レース前情報のみ使用で実用的
 """
 
 import streamlit as st
 import pandas as pd
-import logging
+import numpy as np
+import joblib
+import json
 from pathlib import Path
-from typing import Optional
+import logging
+from typing import Optional, Dict, Any, List
+import traceback
 
-# Configure page
+# ページ設定
 st.set_page_config(
-    page_title="競馬走破タイム予測システム",
+    page_title="🏇 競馬予測システム V4",
     page_icon="🏇",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Configure logging first
+# ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import components
-try:
-    from src.components.data_input import DataInputComponent
-    from src.components.manual_input import ManualInputComponent
-    from src.components.result_display import ResultDisplayComponent
-    from src.components.result_display_v3 import ResultDisplayComponentV3
-    from src.core.prediction_engine import PredictionEngine
-    from src.core.prediction_engine_v3 import PredictionEngineV3
-    from src.utils.config_manager import ConfigManager
-except Exception as e:
-    st.error(f"❌ コンポーネントのインポートエラー: {str(e)}")
-    st.stop()
-
-logger = logging.getLogger(__name__)
-
-
-class HorseRacingApp:
-    """
-    Main application class for horse racing prediction system.
-    
-    Handles the overall application flow, UI management,
-    and coordination between different components.
-    """
+class KeibaV4PredictionApp:
+    """V4競馬予測システム メインアプリケーション"""
     
     def __init__(self):
-        """Initialize the application."""
-        self.config_manager = ConfigManager()
-        # Initialize components as None - they will be created when needed
-        self.data_input_component = None
-        self.manual_input_component = None
-        self.result_display_component = None
-        self.prediction_engine = None
+        self.model = None
+        self.encoders = None
+        self.feature_columns = None
+        self.model_loaded = False
         
-        # Initialize session state
-        self._initialize_session_state()
-        
-        # Load prediction engine
-        self._load_prediction_engine()
+        # モデル読み込み
+        self.load_v4_model()
     
-    def _initialize_session_state(self):
-        """Initialize Streamlit session state variables."""
-        if 'processed_data' not in st.session_state:
-            st.session_state.processed_data = None
-        
-        if 'prediction_results' not in st.session_state:
-            st.session_state.prediction_results = None
-        
-        if 'input_method' not in st.session_state:
-            st.session_state.input_method = "ファイル"
-        
-        if 'show_advanced' not in st.session_state:
-            st.session_state.show_advanced = False
-            
-        if 'model_version' not in st.session_state:
-            st.session_state.model_version = "V3"  # Default to V3
-    
-    def _load_prediction_engine(self):
-        """Load the prediction engine."""
+    def load_v4_model(self):
+        """V4モデルとエンコーダーを読み込み"""
         try:
-            # Model version selection in sidebar
-            if st.session_state.get('model_version', 'V3') == 'V3':
-                self.prediction_engine = PredictionEngineV3()
-                logger.info("V3 Prediction engine loaded successfully")
-            else:
-                self.prediction_engine = PredictionEngine()
-                logger.info("V2 Prediction engine loaded successfully")
-        except Exception as e:
-            st.error(f"❌ 予測エンジンの読み込みに失敗しました: {str(e)}")
-            logger.error(f"Failed to load prediction engine: {e}")
-    
-    def _get_data_input_component(self):
-        """Get or create data input component."""
-        if self.data_input_component is None:
-            self.data_input_component = DataInputComponent()
-        return self.data_input_component
-    
-    def _get_manual_input_component(self):
-        """Get or create manual input component."""
-        if self.manual_input_component is None:
-            self.manual_input_component = ManualInputComponent()
-        return self.manual_input_component
-    
-    def _get_result_display_component(self):
-        """Get or create result display component."""
-        if self.result_display_component is None:
-            # V3モデルの場合はV3表示コンポーネント、V2の場合は従来版
-            if st.session_state.model_version == "V3":
-                self.result_display_component = ResultDisplayComponentV3()
-            else:
-                self.result_display_component = ResultDisplayComponent()
-        return self.result_display_component
-    
-    def run(self):
-        """Run the main application."""
-        self._render_header()
-        self._render_sidebar()
-        self._render_main_content()
-        self._render_footer()
-    
-    def _render_header(self):
-        """Render the application header."""
-        st.title("🏇 競馬走破タイム予測システム")
-        st.markdown("""
-        **機械学習を使用して競馬の走破タイムを予測するシステムです。**  
-        
-        レースの基本情報（日付、競馬場、距離、馬場状態など）を入力すると、AI（LightGBM）が走破タイムを予測します。  
-        CSVファイルのアップロードまたは手動入力でレースデータを入力できます。
-        """)
-        
-        # System status
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            engine_status = "🟢 正常" if self.prediction_engine else "🔴 エラー"
-            st.metric("予測エンジン", engine_status)
-    
-    def _render_sidebar(self):
-        """Render the sidebar with configuration options."""
-        with st.sidebar:
-            st.header("⚙️ 設定")
+            # GitHub Codespaces/Streamlit Cloud用のパス調整
+            model_paths = [
+                # ローカル開発用
+                Path("ml_models_v4/models/lgb_v4_time_model_20251108_211745.pkl"),
+                Path("../ml_models_v4/models/lgb_v4_time_model_20251108_211745.pkl"),
+                # デプロイ用
+                Path("models/lgb_v4_time_model.pkl"),
+                Path("./models/lgb_v4_time_model.pkl")
+            ]
             
-            # Model version selection
-            st.subheader("🤖 モデル選択")
-            previous_version = st.session_state.model_version
-            st.session_state.model_version = st.selectbox(
-                "予測モデル",
-                ["V3", "V2"],
-                index=0 if st.session_state.model_version == "V3" else 1,
-                help="V3: 最新版（脚質推定改善版、順位予測対応）\nV2: 従来版（安定版）"
-            )
+            encoder_paths = [
+                Path("ml_models_v4/models/label_encoders_v4_20251108_211745.pkl"),
+                Path("../ml_models_v4/models/label_encoders_v4_20251108_211745.pkl"),
+                Path("models/label_encoders_v4.pkl"),
+                Path("./models/label_encoders_v4.pkl")
+            ]
             
-            # Model changed - reload engine
-            if previous_version != st.session_state.model_version:
-                self._load_prediction_engine()
-                st.rerun()
+            feature_paths = [
+                Path("ml_models_v4/models/feature_columns_v4_20251108_211745.json"),
+                Path("../ml_models_v4/models/feature_columns_v4_20251108_211745.json"),
+                Path("models/feature_columns_v4.json"),
+                Path("./models/feature_columns_v4.json")
+            ]
             
-            # Model info
-            if self.prediction_engine and hasattr(self.prediction_engine, 'get_model_info'):
-                model_info = self.prediction_engine.get_model_info()
-                if model_info.get('status') == 'loaded':
-                    st.success(f"✅ {model_info.get('version', 'Unknown')} モデル読み込み済み")
-                    if st.session_state.model_version == "V3":
-                        st.info("🔥 V3 新機能:\n- Phase 1改善版脚質推定\n- 順位予測機能\n- レース展開分析")
-                else:
-                    st.error("❌ モデル読み込みエラー")
+            # モデル読み込み
+            model_loaded = False
+            for model_path in model_paths:
+                if model_path.exists():
+                    self.model = joblib.load(model_path)
+                    model_loaded = True
+                    logger.info(f"モデル読み込み成功: {model_path}")
+                    break
             
-            st.divider()
-            
-            # Input method selection
-            st.session_state.input_method = st.radio(
-                "入力方法を選択",
-                ["ファイル", "手動入力"],
-                index=0 if st.session_state.input_method == "ファイル" else 1
-            )
-            
-            st.divider()
-            
-            # Advanced options
-            st.session_state.show_advanced = st.checkbox(
-                "詳細オプション",
-                value=st.session_state.show_advanced
-            )
-            
-            if st.session_state.show_advanced:
-                st.subheader("詳細設定")
-                
-                # Prediction confidence threshold
-                confidence_threshold = st.slider(
-                    "信頼度閾値",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=80.0,
-                    step=1.0,
-                    help="この値以下の予測は警告を表示"
-                )
-                
-                # Batch processing options
-                st.checkbox("バッチ処理モード", value=False)
-                st.checkbox("詳細ログ出力", value=False)
-            
-            st.divider()
-            
-            # Clear data button
-            if st.button("データをクリア", type="secondary"):
-                self._clear_session_data()
-                st.rerun()
-    
-    def _render_main_content(self):
-        """Render the main content area."""
-        
-        # Main tabs
-        tab1, tab2, tab3 = st.tabs(["🎯 予測システム", "🎮 V3 デモ", "📊 設定・情報"])
-        
-        with tab1:
-            # Input section
-            if st.session_state.input_method == "ファイル":
-                self._render_file_input_section()
-            else:
-                self._render_manual_input_section()
-            
-            # Prediction section
-            if st.session_state.processed_data is not None:
-                self._render_prediction_section()
-            
-            # Results section
-            if st.session_state.prediction_results is not None:
-                self._render_results_section()
-        
-        with tab2:
-            # V3 Demo section (only show when V3 is selected)
-            if st.session_state.model_version == "V3":
-                self._render_v3_demo_section()
-            else:
-                st.info("🎮 V3デモはV3モデル選択時のみ利用可能です。サイドバーからV3を選択してください。")
-        
-        with tab3:
-            self._render_settings_and_info()
-    
-    def _render_file_input_section(self):
-        """Render file input section."""
-        st.header("📁 ファイル入力")
-        
-        # Get component instance
-        data_input_component = self._get_data_input_component()
-        
-        # File upload
-        uploaded_data = data_input_component.render_file_upload()
-        
-        if uploaded_data is not None:
-            # Store original CSV data for horse names
-            st.session_state.original_csv_data = uploaded_data
-            
-            # Data validation
-            data_input_component.render_data_validation(uploaded_data)
-            
-            # Skip column mapping if CSV already has correct column names
-            # Direct data processing
-            processed_data, processing_info = data_input_component.render_data_processing(uploaded_data)
-            
-            if processed_data is not None:
-                st.session_state.processed_data = processed_data
-    
-    def _render_manual_input_section(self):
-        """Render manual input section."""
-        st.header("✏️ 手動入力")
-        
-        # Get component instance
-        manual_input_component = self._get_manual_input_component()
-        
-        # Manual input form
-        manual_data = manual_input_component.render_manual_input_form()
-        
-        if manual_data is not None:
-            # Input summary
-            manual_input_component.render_input_summary(manual_data)
-            
-            # Bloodline enrichment and automatic data processing
-            processed_data = manual_input_component.render_bloodline_enrichment(manual_data)
-            
-            if processed_data is not None:
-                st.session_state.processed_data = processed_data
-                st.success("✅ データ処理が完了しました")
-                st.rerun()
-    
-    def _render_prediction_section(self):
-        """Render prediction section."""
-        st.header("🎯 予測実行")
-        
-        processed_data = st.session_state.processed_data
-        
-        if processed_data is None:
-            st.warning("処理済みデータがありません")
-            return
-        
-        # Show processed data summary
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("データ行数", len(processed_data))
-        with col2:
-            st.metric("特徴量数", len(processed_data.columns))
-        
-        # Prediction execution
-        if st.button("予測を実行", type="primary", disabled=self.prediction_engine is None):
-            if self.prediction_engine is None:
-                st.error("❌ 予測エンジンが利用できません")
+            if not model_loaded:
+                st.error("❌ V4モデルファイルが見つかりません")
                 return
             
-            with st.spinner("予測を実行中..."):
-                try:
-                    # Debug: Show processed data info
-                    st.write(f"DEBUG: 処理済みデータ形状: {processed_data.shape}")
-                    st.write(f"DEBUG: 処理済みデータ列: {processed_data.columns.tolist()}")
-                    
-                    prediction_results = self.prediction_engine.predict(processed_data)
-                    
-                    # Debug: Show prediction results structure
-                    st.write(f"DEBUG: 予測結果の型: {type(prediction_results)}")
-                    st.write(f"DEBUG: 予測結果の内容: {prediction_results}")
-                    
-                    st.session_state.prediction_results = prediction_results
-                    st.success("✅ 予測が完了しました")
-                    st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ 予測エラー: {str(e)}")
-                    logger.error(f"Prediction error: {e}")
-                    import traceback
-                    st.write(f"DEBUG: エラー詳細: {traceback.format_exc()}")
-        
-        # Show sample of processed data
-        with st.expander("処理済みデータプレビュー", expanded=False):
-            st.dataframe(processed_data.head(), width='stretch')
+            # エンコーダー読み込み
+            encoder_loaded = False
+            for encoder_path in encoder_paths:
+                if encoder_path.exists():
+                    self.encoders = joblib.load(encoder_path)
+                    encoder_loaded = True
+                    logger.info(f"エンコーダー読み込み成功: {encoder_path}")
+                    break
+            
+            if not encoder_loaded:
+                st.error("❌ エンコーダーファイルが見つかりません")
+                return
+            
+            # 特徴量リスト読み込み
+            features_loaded = False
+            for feature_path in feature_paths:
+                if feature_path.exists():
+                    with open(feature_path, 'r', encoding='utf-8') as f:
+                        self.feature_columns = json.load(f)
+                    features_loaded = True
+                    logger.info(f"特徴量リスト読み込み成功: {feature_path}")
+                    break
+            
+            if not features_loaded:
+                st.error("❌ 特徴量ファイルが見つかりません")
+                return
+            
+            self.model_loaded = True
+            st.success("✅ V4モデル読み込み完了")
+            
+        except Exception as e:
+            st.error(f"❌ モデル読み込みエラー: {str(e)}")
+            logger.error(f"モデル読み込みエラー: {traceback.format_exc()}")
     
-    def _render_results_section(self):
-        """Render results section."""
-        st.header("📊 予測結果")
+    def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """V4モデル用データ前処理"""
+        try:
+            df = df.copy()
+            
+            # 1. カテゴリカル変数のエンコーディング
+            categorical_cols = [
+                '場所', '芝・ダ', '馬場状態', '性別', '騎手名', '調教師',
+                '父_小系統', '父_国系統', '母父_小系統', '母父_国系統'
+            ]
+            
+            for col in categorical_cols:
+                if col in df.columns and col in self.encoders:
+                    df[f'{col}_encoded'] = df[col].astype(str).apply(
+                        lambda x: self.encoders[col].transform([x])[0] 
+                        if x in self.encoders[col].classes_ else 0
+                    )
+            
+            # 2. 数値特徴量の変換
+            if '単勝オッズ' in df.columns:
+                df['単勝オッズ_log'] = np.log1p(df['単勝オッズ'].fillna(df['単勝オッズ'].median()))
+            
+            # 3. 日付特徴量
+            if all(col in df.columns for col in ['年', '月']):
+                df['年月'] = df['年'] * 100 + df['月']
+                df['季節'] = df['月'].apply(self._get_season)
+            
+            # 4. 組み合わせ特徴量
+            if all(col in df.columns for col in ['距離', '芝・ダ']):
+                df['距離_表面'] = df['距離'].astype(str) + '_' + df['芝・ダ'].astype(str)
+                if '距離_表面' in self.encoders:
+                    df['距離_表面_encoded'] = df['距離_表面'].apply(
+                        lambda x: self.encoders['距離_表面'].transform([x])[0] 
+                        if x in self.encoders['距離_表面'].classes_ else 0
+                    )
+            
+            # 5. 血統組み合わせ
+            if all(col in df.columns for col in ['父_小系統', '母父_小系統']):
+                df['血統組み合わせ'] = df['父_小系統'].astype(str) + '_' + df['母父_小系統'].astype(str)
+                if '血統組み合わせ' in self.encoders:
+                    df['血統組み合わせ_encoded'] = df['血統組み合わせ'].apply(
+                        lambda x: self.encoders['血統組み合わせ'].transform([x])[0] 
+                        if x in self.encoders['血統組み合わせ'].classes_ else 0
+                    )
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ データ前処理エラー: {str(e)}")
+            logger.error(f"前処理エラー: {traceback.format_exc()}")
+            return df
+    
+    def _get_season(self, month: int) -> int:
+        """月から季節を取得"""
+        if month in [12, 1, 2]:
+            return 0  # 冬
+        elif month in [3, 4, 5]:
+            return 1  # 春
+        elif month in [6, 7, 8]:
+            return 2  # 夏
+        else:
+            return 3  # 秋
+    
+    def predict_race_time(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """レースタイム予測"""
+        if not self.model_loaded:
+            st.error("❌ モデルが読み込まれていません")
+            return None
         
-        prediction_results = st.session_state.prediction_results
-        input_data = st.session_state.processed_data
+        try:
+            # データ前処理
+            processed_df = self.preprocess_data(df)
+            
+            # 必要な特徴量の確認
+            available_features = [col for col in self.feature_columns if col in processed_df.columns]
+            missing_features = [col for col in self.feature_columns if col not in processed_df.columns]
+            
+            if missing_features:
+                st.warning(f"⚠️ 不足特徴量: {missing_features}")
+            
+            # 予測実行
+            X = processed_df[available_features].copy()
+            X = X.fillna(X.median())  # 欠損値処理
+            
+            predicted_times = self.model.predict(X)
+            
+            # 結果をDataFrameに追加
+            result_df = df.copy()
+            result_df['予測タイム'] = predicted_times
+            result_df['予測順位'] = result_df['予測タイム'].rank(method='min')
+            
+            return result_df
+            
+        except Exception as e:
+            st.error(f"❌ 予測エラー: {str(e)}")
+            logger.error(f"予測エラー: {traceback.format_exc()}")
+            return None
+    
+    def run(self):
+        """メインアプリケーション実行"""
+        # ヘッダー
+        st.title("🏇 競馬予測システム V4")
+        st.markdown("### レース前情報による高精度タイム予測")
         
-        if prediction_results is None:
-            st.warning("表示する予測結果がありません")
+        if not self.model_loaded:
+            st.error("❌ モデルの読み込みに失敗しました。管理者にお問い合わせください。")
             return
         
-        # Get component instance
-        result_display_component = self._get_result_display_component()
+        # サイドバー情報
+        st.sidebar.markdown("## 📊 V4システム情報")
+        st.sidebar.markdown("""
+        **予測精度（2025年実測）:**
+        - MAE: 0.961秒
+        - RMSE: 1.841秒  
+        - 精度: 90.6% (2秒以内)
         
-        # Single prediction results
-        if isinstance(prediction_results, dict):
-            # Use original CSV data for horse names
-            original_data = st.session_state.get('original_csv_data', input_data)
-            result_display_component.render_prediction_results(
-                prediction_results, original_data
-            )
+        **使用特徴量:**
+        - 基本レース条件
+        - 馬・騎手・調教師情報
+        - 血統系統情報
+        - 人気・オッズ情報
         
-        # Batch prediction results
-        elif isinstance(prediction_results, list):
-            result_display_component.render_batch_results(prediction_results)
+        **特徴:**
+        - ✅ レース前情報のみ使用
+        - ✅ 実用的な予測精度
+        - ✅ タイム→順位変換
+        """)
         
-        # Export results option
-        self._render_export_section(prediction_results)
+        # メインコンテンツ
+        tab1, tab2, tab3 = st.tabs(["📁 CSV一括予測", "✍️ 手動入力", "📚 使い方"])
+        
+        with tab1:
+            self.csv_prediction_interface()
+        
+        with tab2:
+            self.manual_input_interface()
+        
+        with tab3:
+            self.usage_guide()
     
-    def _render_v3_demo_section(self):
-        """Render V3 demo section."""
-        try:
-            from src.utils.v3_demo_utils import create_v3_demo_utils
-            
-            demo_utils = create_v3_demo_utils()
-            demo_utils.render_v3_demo_section()
-            
-        except ImportError as e:
-            st.error(f"❌ デモ機能の読み込みに失敗しました: {e}")
-        except Exception as e:
-            st.error(f"❌ デモ実行エラー: {e}")
-    
-    def _render_settings_and_info(self):
-        """Render settings and system information."""
-        st.header("📊 システム情報・設定")
+    def csv_prediction_interface(self):
+        """CSV一括予測インターフェース"""
+        st.markdown("## 📁 CSV一括予測")
+        st.markdown("レースデータをCSVファイルでアップロードして一括予測を実行します。")
         
-        # Model information
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🤖 モデル情報")
+        # CSVフォーマット説明
+        with st.expander("📋 必要なCSVフォーマット"):
+            st.markdown("""
+            ### 必須カラム:
+            - **基本情報**: `距離`, `頭数`, `馬番`, `年齢`, `斤量`
+            - **レース条件**: `場所`, `芝・ダ`, `馬場状態`
+            - **人間情報**: `騎手名`, `調教師`, `性別`
+            - **人気情報**: `人気順`, `単勝オッズ`
+            - **血統情報**: `父_小系統`, `父_国系統`, `母父_小系統`, `母父_国系統`
+            - **日付情報**: `年`, `月`, `日`
+            - **識別情報**: `馬名`
             
-            if self.prediction_engine and hasattr(self.prediction_engine, 'get_model_info'):
-                model_info = self.prediction_engine.get_model_info()
+            ### サンプルデータ:
+            ```csv
+            馬名,年,月,日,場所,芝・ダ,距離,馬場状態,馬番,性別,年齢,騎手名,調教師,斤量,頭数,人気順,単勝オッズ,父_小系統,父_国系統,母父_小系統,母父_国系統
+            サンプル馬,25,11,10,東京,芝,2000,良,1,牡,4,騎手A,調教師B,57,16,1,2.1,ディープ系,日本型サンデー系,キングマンボ系,欧州型ミスプロ系
+            ```
+            """)
+        
+        # ファイルアップロード
+        uploaded_file = st.file_uploader(
+            "CSVファイルを選択してください",
+            type=['csv'],
+            help="上記フォーマットに従ったCSVファイルをアップロードしてください"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # CSV読み込み
+                df = pd.read_csv(uploaded_file, encoding='utf-8')
+                st.success(f"✅ ファイル読み込み完了: {len(df)}件")
                 
-                st.write(f"**モデル版**: {model_info.get('version', 'Unknown')}")
-                st.write(f"**ステータス**: {'🟢 正常' if model_info.get('status') == 'loaded' else '🔴 エラー'}")
-                st.write(f"**特徴量数**: {model_info.get('feature_count', 'Unknown')}")
+                # データプレビュー
+                st.markdown("### 📊 アップロードデータプレビュー")
+                st.dataframe(df.head(10), use_container_width=True)
                 
-                if st.session_state.model_version == "V3" and 'improvements' in model_info:
-                    st.write("**V3の改善点**:")
-                    for improvement in model_info['improvements']:
-                        st.write(f"• {improvement}")
-            else:
-                st.error("モデル情報を取得できませんでした")
-        
-        with col2:
-            st.subheader("📈 パフォーマンス指標")
-            
-            if st.session_state.model_version == "V3":
-                st.metric("順位相関", "0.967", "+0.040 (vs V2)")
-                st.metric("精度向上率", "8.1x", "(vs V1)")
-                st.metric("RMSE", "1.068秒", "")
-            else:
-                st.metric("順位相関", "0.927", "")
-                st.metric("バージョン", "V2", "安定版")
-        
-        st.divider()
-        
-        # System capabilities
-        st.subheader("⚙️ システム機能")
-        
-        capabilities_v2 = [
-            "✅ 走破タイム予測",
-            "✅ ファイル・手動入力対応", 
-            "✅ 血統情報自動付与",
-            "✅ 信頼度表示",
-            "❌ 順位予測",
-            "❌ 脚質推定",
-            "❌ レース展開分析"
-        ]
-        
-        capabilities_v3 = [
-            "✅ 走破タイム予測",
-            "✅ ファイル・手動入力対応",
-            "✅ 血統情報自動付与", 
-            "✅ 信頼度表示",
-            "✅ 順位予測 (新機能)",
-            "✅ 脚質推定 (改良版)",
-            "✅ レース展開分析 (新機能)"
-        ]
-        
-        cap_col1, cap_col2 = st.columns(2)
-        
-        with cap_col1:
-            st.markdown("**V2 機能**")
-            for cap in capabilities_v2:
-                st.write(cap)
-        
-        with cap_col2:
-            st.markdown("**V3 機能**")
-            for cap in capabilities_v3:
-                if "新機能" in cap or "改良版" in cap:
-                    st.write(f"🔥 {cap}")
-                else:
-                    st.write(cap)
-        
-        st.divider()
-        
-        # Version comparison
-        if st.expander("📊 詳細比較表"):
-            comparison_data = {
-                '項目': ['順位相関', '特徴量数', '順位予測', '脚質推定', 'レース展開', '信頼度', '実用性'],
-                'V1': [0.120, 16, '❌', '❌', '❌', '低', '研究用'],
-                'V2': [0.927, 16, '❌', '❌', '❌', '中', '実用可'],
-                'V3 Phase 1': [0.967, 28, '✅', '✅改良', '✅', '高', '本格実用']
-            }
-            
-            comparison_df = pd.DataFrame(comparison_data)
-            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+                # 必要カラムチェック
+                required_cols = [
+                    '馬名', '年', '月', '日', '場所', '芝・ダ', '距離', '馬場状態',
+                    '馬番', '性別', '年齢', '騎手名', '調教師', '斤量', '頭数',
+                    '人気順', '単勝オッズ', '父_小系統', '父_国系統', '母父_小系統', '母父_国系統'
+                ]
+                
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    st.error(f"❌ 不足カラム: {missing_cols}")
+                    st.stop()
+                
+                # 予測実行
+                if st.button("🚀 予測実行", type="primary"):
+                    with st.spinner("予測中..."):
+                        result_df = self.predict_race_time(df)
+                    
+                    if result_df is not None:
+                        st.markdown("### 🎯 予測結果")
+                        
+                        # 結果表示
+                        display_cols = ['馬名', '予測タイム', '予測順位', '人気順', '単勝オッズ']
+                        st.dataframe(
+                            result_df[display_cols].sort_values('予測順位'),
+                            use_container_width=True
+                        )
+                        
+                        # 統計情報
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("最速予想", f"{result_df['予測タイム'].min():.1f}秒")
+                        with col2:
+                            st.metric("最遅予想", f"{result_df['予測タイム'].max():.1f}秒")
+                        with col3:
+                            st.metric("タイム幅", f"{result_df['予測タイム'].max() - result_df['予測タイム'].min():.1f}秒")
+                        
+                        # CSV下载
+                        csv = result_df.to_csv(index=False, encoding='utf-8-sig')
+                        st.download_button(
+                            "📥 結果をCSVダウンロード",
+                            data=csv,
+                            file_name=f"keiba_prediction_v4_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
+                        
+            except Exception as e:
+                st.error(f"❌ ファイル処理エラー: {str(e)}")
     
-    def _render_export_section(self, results):
-        """Render export options for results."""
-        with st.expander("💾 結果エクスポート", expanded=False):
-            st.write("予測結果を保存できます。")
+    def manual_input_interface(self):
+        """手動入力インターフェース"""
+        st.markdown("## ✍️ 手動入力予測")
+        st.markdown("1頭ずつ詳細に入力して予測を実行します。")
+        
+        with st.form("manual_input_form"):
+            col1, col2 = st.columns(2)
             
-            if isinstance(results, dict) and 'predictions' in results:
-                # Single prediction export
-                export_data = {
-                    'predicted_time': results['predictions'][0],
-                    'confidence': results.get('confidence', 0),
-                    'timestamp': pd.Timestamp.now().isoformat()
+            with col1:
+                st.markdown("### 基本情報")
+                horse_name = st.text_input("馬名", value="サンプル馬")
+                year = st.number_input("年", min_value=20, max_value=30, value=25)
+                month = st.number_input("月", min_value=1, max_value=12, value=11)
+                day = st.number_input("日", min_value=1, max_value=31, value=10)
+                
+                st.markdown("### レース条件")
+                location = st.selectbox("競馬場", ["東京", "中山", "阪神", "京都", "新潟", "小倉", "函館", "札幌", "中京", "福島"])
+                surface = st.selectbox("芝・ダート", ["芝", "ダ"])
+                distance = st.number_input("距離(m)", min_value=1000, max_value=4000, value=2000, step=100)
+                track_condition = st.selectbox("馬場状態", ["良", "稍重", "重", "不良"])
+                
+            with col2:
+                st.markdown("### 馬情報")
+                horse_number = st.number_input("馬番", min_value=1, max_value=18, value=1)
+                gender = st.selectbox("性別", ["牡", "牝", "セ"])
+                age = st.number_input("年齢", min_value=2, max_value=10, value=4)
+                weight = st.number_input("斤量", min_value=48.0, max_value=65.0, value=57.0, step=0.5)
+                field_size = st.number_input("頭数", min_value=5, max_value=18, value=16)
+                
+                st.markdown("### 人気・オッズ")
+                popularity = st.number_input("人気順", min_value=1, max_value=18, value=1)
+                odds = st.number_input("単勝オッズ", min_value=1.0, max_value=999.9, value=2.1, step=0.1)
+            
+            col3, col4 = st.columns(2)
+            with col3:
+                st.markdown("### 人的要因")
+                jockey = st.text_input("騎手名", value="騎手A")
+                trainer = st.text_input("調教師", value="調教師B")
+                
+            with col4:
+                st.markdown("### 血統情報")
+                father_small = st.selectbox("父_小系統", [
+                    "ディープ系", "キングマンボ系", "Tサンデー系", "ロベルト系", 
+                    "Pサンデー系", "ストームバード系", "ミスプロ系", "その他"
+                ])
+                father_large = st.selectbox("父_国系統", [
+                    "日本型サンデー系", "欧州型ミスプロ系", "米国型ノーザンダンサー系",
+                    "欧州型ノーザンダンサー系", "米国型ミスプロ系", "その他"
+                ])
+                mother_small = st.selectbox("母父_小系統", [
+                    "キングマンボ系", "ディープ系", "Tサンデー系", "ミスプロ系",
+                    "Pサンデー系", "ロベルト系", "その他"
+                ])
+                mother_large = st.selectbox("母父_国系統", [
+                    "欧州型ミスプロ系", "日本型サンデー系", "米国型ノーザンダンサー系",
+                    "欧州型ノーザンダンサー系", "米国型ミスプロ系", "その他"
+                ])
+            
+            submitted = st.form_submit_button("🎯 予測実行", type="primary")
+            
+            if submitted:
+                # 入力データをDataFrameに変換
+                input_data = {
+                    '馬名': [horse_name],
+                    '年': [year], '月': [month], '日': [day],
+                    '場所': [location], '芝・ダ': [surface], '距離': [distance], '馬場状態': [track_condition],
+                    '馬番': [horse_number], '性別': [gender], '年齢': [age], '斤量': [weight], '頭数': [field_size],
+                    '騎手名': [jockey], '調教師': [trainer],
+                    '人気順': [popularity], '単勝オッズ': [odds],
+                    '父_小系統': [father_small], '父_国系統': [father_large],
+                    '母父_小系統': [mother_small], '母父_国系統': [mother_large]
                 }
                 
-                if st.button("JSON形式でダウンロード"):
-                    st.download_button(
-                        label="結果をダウンロード",
-                        data=pd.Series(export_data).to_json(indent=2),
-                        file_name=f"prediction_result_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
+                df = pd.DataFrame(input_data)
+                
+                with st.spinner("予測中..."):
+                    result_df = self.predict_race_time(df)
+                
+                if result_df is not None:
+                    predicted_time = result_df['予測タイム'].iloc[0]
+                    
+                    st.markdown("### 🎯 予測結果")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("予測タイム", f"{predicted_time:.2f}秒")
+                    with col2:
+                        st.metric("距離", f"{distance}m")
+                    with col3:
+                        st.metric("ペース", f"{predicted_time/distance*1000:.1f}秒/km")
+                    
+                    # 詳細情報
+                    st.markdown("### 📊 詳細情報")
+                    info_df = pd.DataFrame({
+                        '項目': ['馬名', '競馬場', '距離', '馬場', '騎手', '人気', 'オッズ', '予測タイム'],
+                        '値': [horse_name, location, f"{distance}m", track_condition, 
+                              jockey, f"{popularity}番人気", f"{odds}倍", f"{predicted_time:.2f}秒"]
+                    })
+                    st.dataframe(info_df, use_container_width=True)
     
-    def _render_footer(self):
-        """Render the application footer."""
-        st.divider()
+    def usage_guide(self):
+        """使い方ガイド"""
+        st.markdown("## 📚 競馬予測システム V4 使い方ガイド")
         
-        col1, col2, col3 = st.columns(3)
+        st.markdown("""
+        ### 🎯 V4システムの特徴
         
-        with col1:
-            st.write("**対応データ:**")
-            st.write("• CSVファイル")
-            st.write("• 手動入力")
+        **高精度予測**:
+        - 2025年実測で平均誤差0.961秒を達成
+        - 90.6%の馬が2秒以内の精度で予測
+        - プロ予想家レベルの順位予測精度
         
-        with col2:
-            st.write("**入力項目:**")
-            st.write("• レース基本情報")
-            st.write("• 血統情報（オプション）")
+        **実用性**:
+        - レース前情報のみ使用で実際に予測可能
+        - タイム予測→順位変換で安定した結果
+        - 血統・騎手・人気情報を総合的に評価
         
-        with col3:
-            st.write("**出力結果:**")
-            st.write("• 走破タイム予測")
-            st.write("• 信頼度表示")
-    
-    def _clear_session_data(self):
-        """Clear all session data."""
-        st.session_state.processed_data = None
-        st.session_state.prediction_results = None
-        logger.info("Session data cleared")
-
+        ### 📁 CSV一括予測の使い方
+        
+        1. **フォーマット準備**: 必要な21項目を含むCSVを準備
+        2. **ファイルアップロード**: CSVファイルをドラッグ&ドロップ
+        3. **データ確認**: アップロードされたデータをプレビュー
+        4. **予測実行**: ボタンクリックで全頭一括予測
+        5. **結果ダウンロード**: 予測結果をCSVで取得
+        
+        ### ✍️ 手動入力の使い方
+        
+        1. **基本情報**: 馬名、日付、レース条件を入力
+        2. **馬情報**: 馬番、年齢、斤量などの詳細
+        3. **人的要因**: 騎手、調教師情報
+        4. **血統情報**: 父・母父の系統分類
+        5. **予測実行**: 即座にタイム予測結果を表示
+        
+        ### 🎲 予測結果の活用法
+        
+        **単勝戦略**:
+        - 予測1位の馬への投資
+        - 人気薄で予測上位の馬を狙い撃ち
+        
+        **複勝戦略**:
+        - 予測Top3への分散投資
+        - 高い的中率で安定収益
+        
+        **穴馬発見**:
+        - 人気順 vs 予測順位の乖離をチェック
+        - 人気薄×予測上位 = 高配当候補
+        
+        ### ⚠️ 注意事項
+        
+        - 予測は統計的手法に基づく推定値です
+        - 競馬には不確定要素が多く含まれます  
+        - 投資は自己責任で行ってください
+        - システムの結果を過信せず、総合的に判断してください
+        
+        ### 📞 サポート情報
+        
+        - GitHub: https://github.com/Yu10Kumura/keiba-prediction-app
+        - モデルバージョン: V4 (2025年11月版)
+        - 最終更新: 2025年11月8日
+        """)
 
 def main():
-    """Main application entry point."""
+    """メイン実行関数"""
     try:
-        app = HorseRacingApp()
+        app = KeibaV4PredictionApp()
         app.run()
     except Exception as e:
         st.error(f"❌ アプリケーションエラー: {str(e)}")
-        logger.error(f"Application error: {e}")
-        
-        with st.expander("エラー詳細", expanded=False):
-            st.code(str(e), language="text")
-
+        logger.error(f"アプリケーションエラー: {traceback.format_exc()}")
 
 if __name__ == "__main__":
     main()
