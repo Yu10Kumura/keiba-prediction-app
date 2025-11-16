@@ -19,6 +19,8 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple
 import traceback
 import unicodedata
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ページ設定
 st.set_page_config(
@@ -372,7 +374,7 @@ class KeibaV4PredictionApp:
         """)
         
         # メインコンテンツ
-        tab1, tab2, tab3 = st.tabs(["📁 CSV一括予測", "✍️ 手動入力", "📚 使い方"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📁 CSV一括予測", "✍️ 手動入力", "� モデル分析", "�📚 使い方"])
         
         with tab1:
             self.csv_prediction_interface()
@@ -381,6 +383,9 @@ class KeibaV4PredictionApp:
             self.manual_input_interface()
         
         with tab3:
+            self.model_analysis_interface()
+        
+        with tab4:
             self.usage_guide()
     
     def csv_prediction_interface(self):
@@ -691,6 +696,302 @@ class KeibaV4PredictionApp:
         - モデルバージョン: V4 (2025年11月版)
         - 最終更新: 2025年11月8日
         """)
+    
+    def model_analysis_interface(self):
+        """モデル分析インターフェース"""
+        st.markdown("## 📊 モデル分析・精度検証")
+        st.markdown("モデルの予測精度を詳細に分析し、改善点を特定します。")
+        
+        # セクション1: 特徴量重要度
+        st.markdown("---")
+        st.markdown("### 🎯 特徴量重要度分析")
+        st.markdown("モデルがどの特徴量を重視して予測しているかを可視化します。")
+        
+        if self.model and hasattr(self.model, 'feature_importance'):
+            try:
+                # 特徴量重要度を取得
+                importances = self.model.feature_importance(importance_type='gain')
+                
+                if len(importances) == len(self.feature_columns):
+                    importance_df = pd.DataFrame({
+                        '特徴量': self.feature_columns,
+                        '重要度': importances
+                    }).sort_values('重要度', ascending=False)
+                    
+                    # 重要度の正規化
+                    importance_df['重要度率(%)'] = importance_df['重要度'] / importance_df['重要度'].sum() * 100
+                    
+                    # 統計情報
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("総特徴量数", len(importance_df))
+                    with col2:
+                        st.metric("最重要特徴量", importance_df.iloc[0]['特徴量'].replace('_encoded', ''))
+                    with col3:
+                        top3_ratio = importance_df.head(3)['重要度率(%)'].sum()
+                        st.metric("上位3特徴の寄与率", f"{top3_ratio:.1f}%")
+                    with col4:
+                        # 血統関連の寄与率
+                        bloodline_features = importance_df[
+                            importance_df['特徴量'].str.contains('父|母父|血統', na=False)
+                        ]
+                        bloodline_ratio = bloodline_features['重要度率(%)'].sum()
+                        st.metric("血統情報の寄与率", f"{bloodline_ratio:.1f}%")
+                    
+                    # Top 20特徴量のグラフ
+                    st.markdown("#### 📈 重要度 Top 20")
+                    top20 = importance_df.head(20).copy()
+                    top20['特徴量表示'] = top20['特徴量'].str.replace('_encoded', '')
+                    
+                    fig_importance = px.bar(
+                        top20,
+                        x='重要度',
+                        y='特徴量表示',
+                        orientation='h',
+                        title='予測に効いている特徴量（上位20個）',
+                        labels={'重要度': '重要度スコア', '特徴量表示': '特徴量'},
+                        color='重要度',
+                        color_continuous_scale='blues'
+                    )
+                    fig_importance.update_layout(height=600, showlegend=False)
+                    st.plotly_chart(fig_importance, use_container_width=True)
+                    
+                    # 詳細テーブル
+                    with st.expander("📋 全特徴量の重要度詳細"):
+                        display_df = importance_df.copy()
+                        display_df['特徴量'] = display_df['特徴量'].str.replace('_encoded', '')
+                        st.dataframe(
+                            display_df.style.format({
+                                '重要度': '{:.0f}',
+                                '重要度率(%)': '{:.2f}%'
+                            }),
+                            use_container_width=True,
+                            height=400
+                        )
+                    
+            except Exception as e:
+                st.error(f"特徴量重要度の取得エラー: {str(e)}")
+                logger.error(f"特徴量重要度エラー: {traceback.format_exc()}")
+        else:
+            st.warning("⚠️ モデルが読み込まれていないため、特徴量重要度を表示できません。")
+        
+        # セクション2: 予測精度検証
+        st.markdown("---")
+        st.markdown("### 📉 予測精度検証")
+        st.markdown("実績データをアップロードして、モデルの予測精度を詳細に分析します。")
+        
+        st.info("""
+        💡 **検証用データの準備方法:**
+        - 実際のレース結果を含むCSVファイル
+        - 必須カラム: `走破タイム` または `タイム` （実績値）
+        - その他、予測に必要な全カラムを含める
+        """)
+        
+        uploaded_test_data = st.file_uploader(
+            "📁 検証用データ（実績タイム含む）をアップロード",
+            type=['csv'],
+            key='test_data_analysis',
+            help="実績タイムを含むCSVファイルをアップロードしてください"
+        )
+        
+        if uploaded_test_data is not None:
+            try:
+                test_df = pd.read_csv(uploaded_test_data, encoding='utf-8')
+                st.success(f"✅ 検証データ読み込み完了: {len(test_df)}件")
+                
+                # 実績タイムのカラムを特定
+                actual_time_col = None
+                for col in ['走破タイム', 'タイム', '実績タイム']:
+                    if col in test_df.columns:
+                        actual_time_col = col
+                        break
+                
+                if actual_time_col is None:
+                    st.error("❌ 実績タイムのカラムが見つかりません。`走破タイム` または `タイム` というカラムが必要です。")
+                    st.stop()
+                
+                st.info(f"📊 実績タイムカラム: `{actual_time_col}` を使用")
+                
+                # 血統情報の補完
+                bloodline_cols = ['父_小系統', '父_国系統', '母父_小系統', '母父_国系統']
+                missing_bloodline = [col for col in bloodline_cols if col not in test_df.columns]
+                
+                if missing_bloodline and self.bloodline_manager:
+                    if '父馬名' in test_df.columns and '母の父馬名' in test_df.columns:
+                        st.info("🧬 血統情報を自動補完中...")
+                        test_df, _ = self.bloodline_manager.enrich_dataframe(test_df)
+                
+                # 予測実行
+                with st.spinner("予測実行中..."):
+                    # 実績タイムを一時的に退避
+                    actual_times = test_df[actual_time_col].copy()
+                    
+                    # 予測実行
+                    result_df = self.predict_race_time(test_df)
+                
+                if result_df is not None:
+                    # 実績タイムを追加
+                    result_df['実績タイム'] = actual_times
+                    result_df['誤差'] = abs(result_df['予測タイム'] - result_df['実績タイム'])
+                    result_df['誤差率(%)'] = (result_df['誤差'] / result_df['実績タイム']) * 100
+                    
+                    st.success("✅ 予測完了！精度分析を表示します。")
+                    
+                    # 全体統計
+                    st.markdown("#### 📊 全体精度統計")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        mae = result_df['誤差'].mean()
+                        st.metric("平均誤差 (MAE)", f"{mae:.3f}秒")
+                    
+                    with col2:
+                        rmse = np.sqrt((result_df['誤差']**2).mean())
+                        st.metric("RMSE", f"{rmse:.3f}秒")
+                    
+                    with col3:
+                        accuracy_2sec = (result_df['誤差'] <= 2).mean() * 100
+                        st.metric("2秒以内精度", f"{accuracy_2sec:.1f}%")
+                    
+                    with col4:
+                        max_error = result_df['誤差'].max()
+                        st.metric("最大誤差", f"{max_error:.1f}秒")
+                    
+                    # 散布図: 実績 vs 予測
+                    st.markdown("#### 📈 実績タイム vs 予測タイム")
+                    
+                    fig_scatter = px.scatter(
+                        result_df,
+                        x='実績タイム',
+                        y='予測タイム',
+                        hover_data=['馬名', '誤差', '距離', '場所'] if '馬名' in result_df.columns else ['誤差'],
+                        title='実績タイム vs 予測タイム（理想は対角線上）',
+                        labels={'実績タイム': '実績タイム（秒）', '予測タイム': '予測タイム（秒）'},
+                        opacity=0.6
+                    )
+                    
+                    # 理想線（y=x）を追加
+                    min_time = min(result_df['実績タイム'].min(), result_df['予測タイム'].min())
+                    max_time = max(result_df['実績タイム'].max(), result_df['予測タイム'].max())
+                    
+                    fig_scatter.add_trace(
+                        go.Scatter(
+                            x=[min_time, max_time],
+                            y=[min_time, max_time],
+                            mode='lines',
+                            name='理想線 (y=x)',
+                            line=dict(color='red', dash='dash', width=2)
+                        )
+                    )
+                    
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    
+                    # 誤差分布
+                    st.markdown("#### 📊 誤差分布")
+                    
+                    fig_hist = px.histogram(
+                        result_df,
+                        x='誤差',
+                        nbins=50,
+                        title='予測誤差の分布（0に近いほど精度が高い）',
+                        labels={'誤差': '誤差（秒）', 'count': '件数'},
+                        color_discrete_sequence=['steelblue']
+                    )
+                    fig_hist.add_vline(x=0, line_dash="dash", line_color="red", annotation_text="完全予測")
+                    fig_hist.add_vline(x=2, line_dash="dot", line_color="orange", annotation_text="±2秒")
+                    fig_hist.add_vline(x=-2, line_dash="dot", line_color="orange")
+                    
+                    st.plotly_chart(fig_hist, use_container_width=True)
+                    
+                    # セグメント別誤差分析
+                    st.markdown("#### 🔍 セグメント別誤差分析")
+                    st.markdown("特定の条件下で精度が低下していないか確認します。")
+                    
+                    segment_options = []
+                    for col in ['距離', '場所', '人気順', '芝・ダ', '馬場状態', '頭数']:
+                        if col in result_df.columns:
+                            segment_options.append(col)
+                    
+                    if segment_options:
+                        segment_col = st.selectbox(
+                            "分析軸を選択",
+                            segment_options,
+                            help="この軸でデータを分割して精度を比較します"
+                        )
+                        
+                        # セグメント別集計
+                        segment_analysis = result_df.groupby(segment_col).agg({
+                            '誤差': ['mean', 'std', 'count'],
+                            '実績タイム': 'mean'
+                        }).round(3)
+                        
+                        segment_analysis.columns = ['平均誤差', '標準偏差', 'サンプル数', '平均実績タイム']
+                        segment_analysis = segment_analysis.sort_values('平均誤差', ascending=False)
+                        segment_analysis = segment_analysis[segment_analysis['サンプル数'] >= 3]  # サンプル数3以上
+                        
+                        # グラフ表示
+                        fig_segment = px.bar(
+                            segment_analysis.reset_index(),
+                            x=segment_col,
+                            y='平均誤差',
+                            error_y='標準偏差',
+                            title=f'{segment_col}別の予測誤差（エラーバー: 標準偏差）',
+                            labels={'平均誤差': '平均誤差（秒）'},
+                            color='平均誤差',
+                            color_continuous_scale='RdYlGn_r'
+                        )
+                        fig_segment.add_hline(y=mae, line_dash="dash", line_color="blue", 
+                                             annotation_text=f"全体平均: {mae:.3f}秒")
+                        
+                        st.plotly_chart(fig_segment, use_container_width=True)
+                        
+                        # テーブル表示
+                        st.dataframe(
+                            segment_analysis.style.format({
+                                '平均誤差': '{:.3f}',
+                                '標準偏差': '{:.3f}',
+                                '平均実績タイム': '{:.1f}'
+                            }).background_gradient(subset=['平均誤差'], cmap='RdYlGn_r'),
+                            use_container_width=True
+                        )
+                    
+                    # 外れ値分析
+                    st.markdown("#### 🚨 予測が大きく外れたケース（上位10件）")
+                    st.markdown("これらのケースを分析することで、モデルの弱点を特定できます。")
+                    
+                    outlier_cols = ['馬名', '実績タイム', '予測タイム', '誤差', '距離', '場所', '人気順', '単勝オッズ']
+                    available_outlier_cols = [col for col in outlier_cols if col in result_df.columns]
+                    
+                    outliers = result_df.nlargest(10, '誤差')[available_outlier_cols]
+                    
+                    st.dataframe(
+                        outliers.style.format({
+                            '実績タイム': '{:.2f}',
+                            '予測タイム': '{:.2f}',
+                            '誤差': '{:.2f}',
+                            '単勝オッズ': '{:.1f}'
+                        } if '単勝オッズ' in available_outlier_cols else {
+                            '実績タイム': '{:.2f}',
+                            '予測タイム': '{:.2f}',
+                            '誤差': '{:.2f}'
+                        }).background_gradient(subset=['誤差'], cmap='Reds'),
+                        use_container_width=True
+                    )
+                    
+                    # ダウンロードボタン
+                    st.markdown("#### 📥 分析結果のダウンロード")
+                    
+                    result_csv = result_df.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        "分析結果をCSVダウンロード",
+                        data=result_csv,
+                        file_name=f"model_analysis_result_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+                    
+            except Exception as e:
+                st.error(f"❌ 分析エラー: {str(e)}")
+                logger.error(f"分析エラー: {traceback.format_exc()}")
 
 def main():
     """メイン実行関数"""
